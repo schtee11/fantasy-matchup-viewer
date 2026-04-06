@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NFL Watchlist – Sleeper + NFL Matchups</title>
+  <style>
+    :root{--bg:#0b1022;--bg2:#0f172a;--card:#0d1224;--text:#e5e7eb;--muted:#9ca3af;--accent:#60a5fa;--accent2:#34d399;--border:rgba(255,255,255,.08);--radius:14px;--shadow:0 10px 30px rgba(0,0,0,.35)}
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;min-height:100vh;background:linear-gradient(135deg,var(--bg) 0%, #0c1328 40%, var(--bg2) 100%) fixed;background-size:200% 200%;background-repeat:no-repeat;color:var(--text);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu}
+    a{color:var(--accent)}
+    .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
+    .card{background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
+    header{display:flex;align-items:center;gap:14px;justify-content:space-between;padding:16px 18px;border:1px solid var(--border);border-radius:var(--radius);background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02));box-shadow:var(--shadow)}
+    header h1{font-size:18px;margin:0;letter-spacing:.3px}
+    .row{display:flex;flex-wrap:wrap;gap:12px}
+    .control{display:flex;flex-direction:column;gap:6px}
+    .control label{font-size:12px;color:var(--muted)}
+    select,input[type="number"],input[type="text"],button{appearance:none;background:#0a1020;border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:10px}
+    button{cursor:pointer;transition:transform .04s ease,box-shadow .2s ease;background:linear-gradient(180deg,#15213e,#0f1934);border-color:#1c2a50}
+    button:hover{box-shadow:0 10px 24px rgba(96,165,250,.18)}
+    button:active{transform:translateY(1px)}
+    .split{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}
+    @media (max-width:900px){.split{grid-template-columns:1fr}}
+    .panel{padding:14px}
+    .panel h2{margin:0 0 10px;font-size:14px;color:#cbd5e1}
+    .matches{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+    .match{padding:14px;border:1px solid var(--border);border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01));display:flex;flex-direction:column;gap:10px}
+    .teams{display:flex;align-items:center;justify-content:space-between;font-weight:700;font-size:18px}
+    .sub{color:var(--muted);font-size:12px}
+    .match button{margin-top:6px}
+    .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);padding:4px 8px;border-radius:999px;background:rgba(255,255,255,.04);font-size:12px;color:#cbd5e1}
+    .list{display:grid;gap:6px}
+    .player{display:grid;grid-template-columns:1.2fr .6fr .6fr 1fr .5fr;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01))}
+    @media (max-width:700px){.player{grid-template-columns:1fr 1fr;grid-auto-rows:auto}}
+    .muted{color:var(--muted)}
+    .empty{padding:18px;text-align:center;color:var(--muted)}
+    .footer{margin-top:16px;color:var(--muted);font-size:12px}
+    .badge{font-size:11px;border:1px solid var(--border);padding:2px 6px;border-radius:7px;background:rgba(255,255,255,.05)}
+    .status{margin-top:10px;padding:10px;border:1px dashed var(--border);border-radius:10px;color:#cbd5e1}
+    .ok{color:#34d399}
+    .err{color:#f87171}
+    details summary{cursor:pointer}
+    .modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);z-index:9999;padding:16px}
+    .modal.open{display:flex}
+    .modal-sheet{width:min(700px,100%);max-height:90vh;overflow:auto;border:1px solid var(--border);border-radius:16px;background:#0d1224;box-shadow:var(--shadow)}
+    .modal-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border)}
+    .modal-title{font-weight:700}
+    .modal-body{padding:12px}
+    .modal .list{padding:8px}
+    .modal .player{background:#0a1020;border-color:rgba(255,255,255,.12)}
+    .modal .player:first-child{background:#0f1934 !important;backdrop-filter:none !important}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="card">
+      <h1>🏈 NFL Watchlist — Sleeper + NFL Matchups</h1>
+      <div class="row" style="align-items:flex-end">
+        <div class="control">
+          <label>Username</label>
+          <input id="username" type="text" value="Username" />
+        </div>
+        <div class="control">
+          <label>Season</label>
+          <input id="season" type="number" min="2018" max="2100" />
+        </div>
+        <div class="control">
+          <label>Week</label>
+          <select id="week"></select>
+        </div>
+        <div class="control">
+          <label>League</label>
+          <select id="league"></select>
+        </div>
+        <div class="control">
+          <button id="refresh">Refresh Data</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="split">
+      <section class="panel card" id="matchesPanel">
+        <h2>Pick an NFL matchup</h2>
+        <div class="matches" id="matches"></div>
+      </section>
+      <section class="panel card">
+        <h2>Players you roster in this matchup</h2>
+        <div id="pickedTitle" class="sub" style="margin-bottom:8px"></div>
+        <div id="players" class="list"></div>
+        <div id="status" class="status"></div>
+      </section>
+    </div>
+
+    <details class="card" style="margin-top:14px;padding:12px">
+      <summary><strong>Diagnostics & Test Data</strong> (use if network errors occur)</summary>
+      <div class="row" style="margin-top:10px">
+        <button id="btnSelfTest">Run self‑tests</button>
+        <button id="btnTestSchedule">Use inline TEST schedule (no network)</button>
+        <button id="btnDemoRoster">Inject DEMO roster (offline)</button>
+        <span id="diagOut" class="muted" style="align-self:center;margin-left:8px"></span>
+      </div>
+      <div class="muted" style="margin-top:8px">
+        If you opened this file inside a sandboxed viewer and see <code>TypeError: Failed to fetch</code>, download it and open in your browser from disk, or serve it locally (e.g., <code>npx serve</code>). ESPN sometimes blocks CORS; we auto‑fallback to an inline test schedule when that happens.
+      </div>
+    </details>
+
+    <div class="footer">
+      Data sources: <span class="badge">Sleeper API</span> & <span class="badge">ESPN public scoreboard</span>. Runs fully in your browser.
+    </div>
+  </div>
+
+  <div id="modal" class="modal" aria-hidden="true">
+    <div class="modal-sheet">
+      <div class="modal-head">
+        <div id="modalTitle" class="modal-title"></div>
+        <button id="modalClose">Close</button>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script>
+  const $ = sel => document.querySelector(sel);
+  const $el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt) e.textContent = txt; return e };
+  const sleep = (ms) => new Promise(r=>setTimeout(r,ms));
+  const setStatus = (html, cls='')=>{ const s=$('#status'); s.innerHTML=html; s.className='status '+cls; };
+
+  const INLINE_TEST_SCHEDULE = [
+    { id:'t1', year:(new Date().getFullYear()), week:1, home:'NYJ', away:'BUF', kickoff:new Date(Date.now()+3600e3).toISOString(), home_score:0, away_score:0, status:'Scheduled' },
+    { id:'t2', year:(new Date().getFullYear()), week:1, home:'KC', away:'BAL', kickoff:new Date(Date.now()+7200e3).toISOString(), home_score:0, away_score:0, status:'Scheduled' }
+  ];
+  const DEMO_ROSTER = [
+    { pid:'demo_qb1', full_name:'Josh Allen', team:'BUF', position:'QB' },
+    { pid:'demo_wr1', full_name:'Garrett Wilson', team:'NYJ', position:'WR' },
+    { pid:'demo_te1', full_name:'Travis Kelce', team:'KC', position:'TE' },
+    { pid:'demo_rb1', full_name:'Derrick Henry', team:'BAL', position:'RB' }
+  ];
+
+  const state = { user:null, leagues:[], rostersByLeague:new Map(), playersIndex:{}, owned:new Map(), schedule:[], selectedMatch:null, scheduleSource:'espn', demoMode:false, statsCache:new Map(), leagueSettings:new Map() };
+  let autoTimer = null;
+
+  async function jsonFetch(url){
+    try{ const res = await fetch(url,{mode:'cors'}); if(!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`); return await res.json(); }
+    catch(e){ throw new Error(`Failed to fetch ${url}: ${e.message}`); }
+  }
+
+  const sleeper = {
+    async getState(){ return jsonFetch('https://api.sleeper.app/v1/state/nfl'); },
+    async getUser(username){ return jsonFetch(`https://api.sleeper.app/v1/user/${encodeURIComponent(username)}`); },
+    async getLeagues(userId,season){ return jsonFetch(`https://api.sleeper.app/v1/user/${userId}/leagues/nfl/${season}`); },
+    async getLeague(leagueId){ return jsonFetch(`https://api.sleeper.app/v1/league/${leagueId}`); },
+    async getRosters(leagueId){ return jsonFetch(`https://api.sleeper.app/v1/league/${leagueId}/rosters`); },
+    async getPlayers(){ return jsonFetch('https://api.sleeper.app/v1/players/nfl'); },
+    async getWeekStats(season,week){ return jsonFetch(`https://api.sleeper.app/v1/stats/nfl/regular/${season}/${week}`); }
+  };
+
+  const scheduleProvider = {
+    async espn(year,week){
+      const url=`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?year=${year}&week=${week}&seasontype=2`;
+      const data = await jsonFetch(url);
+      const events = data?.events||[];
+      return events.map(ev=>{
+        const c=ev.competitions?.[0];
+        const h=c?.competitors?.find(x=>x.homeAway==='home');
+        const a=c?.competitors?.find(x=>x.homeAway==='away');
+        const toSym=t=>t?.team?.abbreviation||t?.team?.displayName||'TBD';
+        const status=c?.status; const type=status?.type; let st='';
+        if(type?.completed) st='Final'; else if(type?.state==='pre') st='Scheduled'; else if(type?.state==='in') st= status?.period? `Q${status.period} ${status.displayClock||''}`.trim() : 'Live'; else st= type?.description || '';
+        return { id: ev.id, week, kickoff: c?.date || ev?.date, home: toSym(h), away: toSym(a), home_score: h?.score!=null? Number(h.score):null, away_score: a?.score!=null? Number(a.score):null, status: st };
+      });
+    },
+    async inline(year,week){ return INLINE_TEST_SCHEDULE.filter(g=>g.year===year&&g.week===week).map(g=>({...g})); }
+  };
+
+  function normalizeTeamTag(tag){ const map={JAC:'JAX',LA:'LAR'}; return tag? (map[tag]||tag):tag }
+
+  function buildOwnedIndex(){
+    const myId = state.user?.user_id; state.owned = new Map();
+    if(state.demoMode){ for(const p of DEMO_ROSTER){ state.owned.set(p.pid,{player:p,leagues:[{id:'demo',name:'DEMO League'}]}); } return; }
+    for (const [leagueId, rosters] of state.rostersByLeague){
+      const league = state.leagues.find(l=>l.league_id===leagueId);
+      for (const r of rosters){
+        const co = Array.isArray(r.co_owners)? r.co_owners:[]; const isMine = r.owner_id===myId || co.includes(myId); if(!isMine) continue;
+        const ids = Array.isArray(r.players)? r.players:[];
+        for (const pid of ids){ const p = state.playersIndex[pid]; if(!p) continue; const entry = state.owned.get(pid)||{player:p,leagues:[]}; if(!entry.leagues.some(x=>x.id===leagueId)) entry.leagues.push({id:leagueId,name:league?.name||leagueId}); state.owned.set(pid,entry); }
+      }
+    }
+  }
+
+  function renderWeeks(n=18){ const sel=$('#week'); sel.innerHTML=''; for(let w=1; w<=n; w++){ const o=$el('option'); o.value=String(w); o.textContent=`Week ${w}`; sel.appendChild(o); } }
+
+  function renderLeagues(){ const sel=$('#league'); sel.innerHTML=''; const any=$el('option'); any.value='*'; any.textContent='All leagues'; sel.appendChild(any); for(const lg of state.leagues){ const o=$el('option'); o.value=lg.league_id; o.textContent=lg.name||lg.league_id; sel.appendChild(o);} }
+
+  function renderMatches(){
+    const host=$('#matches'); host.innerHTML=''; if(!state.schedule.length){ host.appendChild($el('div','empty','No games found for this week.')); return; }
+    const ownedByTeam=new Map(); for(const [,entry] of state.owned){ const t=normalizeTeamTag(entry.player?.team); if(!t) continue; ownedByTeam.set(t,(ownedByTeam.get(t)||0)+1); }
+    const sched=[...state.schedule].sort((a,b)=>{ const ta=a.kickoff?new Date(a.kickoff).getTime():0; const tb=b.kickoff?new Date(b.kickoff).getTime():0; return ta-tb; });
+    for(const g of sched){
+      const card=$el('div','match');
+      const teams=$el('div','teams');
+      const txt=(label,score)=> (score==null? label: `${label} ${score}`);
+      teams.innerHTML=`<span>${txt(g.away,g.away_score)}</span><span> @ </span><span>${txt(g.home,g.home_score)}</span>`; card.appendChild(teams);
+      const sub=$el('div','sub');
+      const ko=g.kickoff?new Date(g.kickoff):null; sub.textContent= g.status && g.status!=='Scheduled' ? g.status : (ko?`Kick: ${ko.toLocaleString()}`:'Kick: TBA');
+      card.appendChild(sub);
+      const counts=$el('div'); const ap=ownedByTeam.get(normalizeTeamTag(g.away))||0; const hp=ownedByTeam.get(normalizeTeamTag(g.home))||0; counts.appendChild($el('span','pill',`${g.away} · ${ap} on your roster`)); counts.appendChild($el('span','pill',`${g.home} · ${hp} on your roster`)); counts.style.display='flex'; counts.style.gap='8px'; counts.style.flexWrap='wrap'; card.appendChild(counts);
+      const btn=$el('button',null,'Show my players in this game'); btn.addEventListener('click',()=>selectMatch(g)); card.appendChild(btn);
+      host.appendChild(card);
+    }
+  }
+
+  function buildList(rows){
+    const list=$el('div','list');
+    const header=$el('div','player'); header.style.position='sticky'; header.style.top='0'; header.style.zIndex='2'; header.style.backdropFilter='blur(6px)'; header.innerHTML=`<strong>Player</strong><strong>Pos</strong><strong>Team</strong><strong>League</strong><strong>Pts</strong>`; list.appendChild(header);
+    for(const r of rows){ const row=$el('div','player'); row.innerHTML=`<div>${r.name}</div><div class="muted">${r.pos}</div><div>${r.team}</div><div class="muted">${r.league}</div><div><strong>${r.pts}</strong></div>`; list.appendChild(row); }
+    return list;
+  }
+
+  function openModal(title, node){ $('#modalTitle').textContent=title; const b=$('#modalBody'); b.innerHTML=''; b.appendChild(node); $('#modal').classList.add('open'); $('#modal').setAttribute('aria-hidden','false'); }
+  function closeModal(){ $('#modal').classList.remove('open'); $('#modal').setAttribute('aria-hidden','true'); }
+
+  async function ensureWeekStats(){
+    const season=Number($('#season').value); const week=Number($('#week').value); const key=`${season}-${week}`;
+    if(!state.statsCache.has(key)){ const stats=await sleeper.getWeekStats(season,week); state.statsCache.set(key,stats||{}); }
+    return key;
+  }
+
+  function calcPoints(pid, leagueId, key){
+    const stats=state.statsCache.get(key)||{}; const s=stats?.[pid]||{}; const settings=state.leagueSettings.get(leagueId)||{}; let total=0; for(const k in settings){ const w=settings[k]; const v=s[k]; if(typeof w==='number' && typeof v==='number') total += w*v; } return (Math.round(total*100)/100).toFixed(2);
+  }
+
+  async function selectMatch(g){
+    state.selectedMatch=g; const title=$('#pickedTitle'); title.textContent=`Selected: ${g.away} @ ${g.home}`;
+    const teamSet=new Set([normalizeTeamTag(g.away),normalizeTeamTag(g.home)]); const leagueFilter=$('#league').value; const key=await ensureWeekStats();
+    const rows=[]; for(const [pid,entry] of state.owned){ const p=entry.player; const tm=normalizeTeamTag(p?.team); if(!teamSet.has(tm)) continue; const name=p.full_name||[p.first_name||'',p.last_name||''].join(' ').trim()||(p.last_name||p.first_name||`#${p.number||''}`); const arr=(leagueFilter==='*')?entry.leagues:entry.leagues.filter(l=>l.id===leagueFilter); for(const L of arr){ const pts=calcPoints(pid, L.id, key); rows.push({name, pos:p.position||'-', team:tm||'FA', league:L.name, pts}); } }
+    rows.sort((a,b)=> a.league.localeCompare(b.league) || (a.team===b.team? (a.pos.localeCompare(b.pos)||a.name.localeCompare(b.name)) : a.team.localeCompare(b.team)));
+    const isMobile = window.matchMedia('(max-width:900px)').matches;
+    if(isMobile){ const body=$('#modalBody'); body.innerHTML=''; if(!rows.length){ openModal(`${g.away} @ ${g.home}`,$el('div','empty','You don\'t roster any players in this matchup (for the selected league filter).')); return; } openModal(`${g.away} @ ${g.home}`, buildList(rows)); return; }
+    const host=$('#players'); host.innerHTML=''; if(!rows.length){ host.appendChild($el('div','empty','You don\'t roster any players in this matchup (for the selected league filter).')); return; } host.appendChild(buildList(rows));
+  }
+
+  async function refreshScheduleOnly(){
+    try{ const yr=Number($('#season').value); const wk=Number($('#week').value); const sched=await scheduleProvider.espn(yr,wk); state.schedule=sched; renderMatches(); }catch(e){}
+  }
+
+  function startAutoRefresh(){ if(autoTimer) clearInterval(autoTimer); autoTimer=setInterval(()=>{ refreshScheduleOnly(); }, 45000); }
+
+  async function refresh(){
+    const username=$('#username').value.trim(); const season=Number($('#season').value); const week=Number($('#week').value);
+    try{
+      $('#refresh').disabled=true; setStatus('Loading...','');
+      if(!season||!week){ try{ const st=await sleeper.getState(); if(!$('#season').value) $('#season').value=st.season||new Date().getFullYear(); if(!$('#week').value) $('#week').value=st.week||1; }catch(e){} }
+      if(!state.demoMode){
+        const user=await sleeper.getUser(username); state.user=user; const leaguesRaw=await sleeper.getLeagues(user.user_id,Number($('#season').value)); state.leagues=(leaguesRaw||[]).map(l=>({league_id:l.league_id,name:l.name})); renderLeagues();
+        state.rostersByLeague=new Map(); for(const lg of state.leagues){ const ros=await sleeper.getRosters(lg.league_id); state.rostersByLeague.set(lg.league_id,ros); await sleep(90); }
+        if(!Object.keys(state.playersIndex).length){ const idx=await sleeper.getPlayers(); const slim={}; for(const [k,v] of Object.entries(idx)){ slim[k]={ full_name:v.full_name, first_name:v.first_name, last_name:v.last_name, team:v.team, position:v.position, number:v.number }; } state.playersIndex=slim; }
+        state.leagueSettings=new Map(); for(const lg of state.leagues){ try{ const full=await sleeper.getLeague(lg.league_id); state.leagueSettings.set(lg.league_id, full?.scoring_settings||{}); await sleep(60);}catch(e){} }
+      }
+      buildOwnedIndex();
+      state.scheduleSource='espn'; try{ state.schedule=await scheduleProvider.espn(Number($('#season').value),Number($('#week').value)); }catch(e){ state.schedule=await scheduleProvider.inline(Number($('#season').value),Number($('#week').value)); state.scheduleSource='inline-test'; }
+      renderMatches(); $('#pickedTitle').textContent=''; $('#players').innerHTML=''; setStatus(`Ready. Schedule source: <span class="badge">${state.scheduleSource}</span>${state.demoMode?' · <span class="badge">DEMO roster</span>':''}`,'ok');
+      startAutoRefresh();
+    }catch(err){ setStatus('Error: '+err.message,'err'); alert('Error: '+err.message+'\nIf this is a CORS/network issue, try the Diagnostics & Test Data buttons below.'); }
+    finally{ $('#refresh').disabled=false; }
+  }
+
+  async function init(){
+    renderWeeks(18);
+    try{ const st=await sleeper.getState(); $('#season').value=st.season||new Date().getFullYear(); $('#week').value=st.week||1; }catch{ $('#season').value=new Date().getFullYear(); $('#week').value=1; }
+    $('#refresh').addEventListener('click',refresh); $('#week').addEventListener('change',refresh); $('#season').addEventListener('change',refresh); $('#league').addEventListener('change',()=>{ if(state.selectedMatch) selectMatch(state.selectedMatch); });
+    $('#btnSelfTest').addEventListener('click',async()=>{ const out=$('#diagOut'); out.textContent='Running...'; const results=[]; async function step(n,f){ const t0=performance.now(); try{ await f(); const dt=(performance.now()-t0).toFixed(0); results.push(`✅ ${n} (${dt}ms)`);}catch(e){ results.push(`❌ ${n}: ${e.message}`);} } await step('Sleeper state',()=>sleeper.getState()); await step('User lookup',()=>sleeper.getUser($('#username').value.trim())); await step('Schedule (ESPN)',()=>scheduleProvider.espn(Number($('#season').value),Number($('#week').value))); out.innerHTML=results.map(r=>`<div>${r}</div>`).join(''); });
+    $('#btnTestSchedule').addEventListener('click',async()=>{ const yr=Number($('#season').value)||new Date().getFullYear(); const wk=Number($('#week').value)||1; state.schedule=await scheduleProvider.inline(yr,wk); state.scheduleSource='inline-test'; renderMatches(); setStatus('Loaded inline TEST schedule. Pick a matchup, or inject a demo roster to see players.','ok'); });
+    $('#btnDemoRoster').addEventListener('click',async()=>{ state.demoMode=true; state.user={user_id:'demo_user'}; state.leagues=[{league_id:'demo',name:'DEMO League'}]; renderLeagues(); buildOwnedIndex(); renderMatches(); setStatus('DEMO roster injected. Use inline TEST schedule for a full offline demo.','ok'); });
+    $('#modalClose').addEventListener('click',closeModal); $('#modal').addEventListener('click',e=>{ if(e.target.id==='modal') closeModal(); }); document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
+    refresh();
+  }
+
+  init();
+  </script>
+</body>
+</html>
