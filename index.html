@@ -3,93 +3,78 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NFL Watchlist – Sleeper + NFL Matchups</title>
+  <title>My Fantasy Teams — one view</title>
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
   <div class="wrap">
-    <header class="card">
-      <div style="display:flex;align-items:center;gap:10px">
-        <h1>NFL Watchlist — Sleeper + NFL Matchups</h1>
-        <button id="themeToggle" class="theme-toggle" title="Toggle dark/light theme" aria-label="Toggle dark or light theme"></button>
-      </div>
-      <div class="row" style="align-items:flex-end">
-        <div class="control">
-          <label for="username">Username</label>
-          <input id="username" type="text" value="Username" />
-        </div>
-        <div class="control">
-          <label for="season">Season</label>
-          <input id="season" type="number" min="2018" max="2100" />
-        </div>
-        <div class="control">
-          <label for="week">Week</label>
-          <select id="week"></select>
-        </div>
-        <div class="control">
-          <label for="league">League</label>
-          <select id="league"></select>
-        </div>
-        <div class="control">
-          <button id="refresh">Refresh Data</button>
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">🏈</span>
+        <div>
+          <h1>My Fantasy Teams</h1>
+          <div class="brand-sub">All your Sleeper leagues, one view</div>
         </div>
       </div>
+      <button id="themeToggle" class="icon-btn" title="Toggle theme" aria-label="Toggle dark or light theme">☀️</button>
     </header>
 
-    <!-- F1: Bye Week Section -->
-    <div id="byeSection"></div>
+    <section class="controls">
+      <div class="control grow">
+        <label for="username">Sleeper username</label>
+        <input id="username" type="text" placeholder="e.g. yourname" autocomplete="username" spellcheck="false" />
+      </div>
+      <div class="control">
+        <label for="season">Season</label>
+        <input id="season" type="number" min="2018" max="2100" />
+      </div>
+      <div class="control">
+        <label for="week">Week</label>
+        <select id="week"></select>
+      </div>
+      <div class="control">
+        <label>&nbsp;</label>
+        <button id="loadBtn" class="primary">Load</button>
+      </div>
+      <div class="control">
+        <label>&nbsp;</label>
+        <button id="demoBtn" class="ghost" title="See a sample dashboard with no login">Demo</button>
+      </div>
+    </section>
 
-    <div class="split">
-      <section class="panel card" id="matchesPanel">
-        <h2>Pick an NFL matchup</h2>
-        <div class="matches" id="matches"></div>
-      </section>
-      <section class="panel card">
-        <!-- F8: Watchlist Section -->
-        <div id="watchlistSection"></div>
-        <h2>Players you roster in this matchup</h2>
-        <div id="pickedTitle" class="sub" style="margin-bottom:8px"></div>
-        <div id="players" class="list"></div>
-        <div id="status" class="status"></div>
-      </section>
+    <div id="summary" class="summary"></div>
+
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <div class="tabs" role="tablist" aria-label="Filter by result">
+          <button class="result-tab active" data-result="all">All</button>
+          <button class="result-tab" data-result="winning">Winning</button>
+          <button class="result-tab" data-result="losing">Losing</button>
+        </div>
+        <select id="leagueFilter" class="league-filter" aria-label="Filter by league">
+          <option value="*">All leagues</option>
+        </select>
+        <button id="starredToggle" class="chip-btn" title="Show only teams with starred players">★ Starred</button>
+      </div>
+      <div class="toolbar-right">
+        <button id="expandAll" class="chip-btn">Expand all</button>
+      </div>
     </div>
 
-    <details class="card" style="margin-top:14px;padding:12px">
-      <summary><strong>Diagnostics & Test Data</strong> (use if network errors occur)</summary>
-      <div class="row" style="margin-top:10px">
-        <button id="btnSelfTest">Run self-tests</button>
-        <button id="btnTestSchedule">Use inline TEST schedule (no network)</button>
-        <button id="btnDemoRoster">Inject DEMO roster (offline)</button>
-        <button id="btnClearCache">Clear player cache</button>
-        <span id="diagOut" class="muted" style="align-self:center;margin-left:8px"></span>
-      </div>
-      <div class="muted" style="margin-top:8px">
-        If you opened this file inside a sandboxed viewer and see <code>TypeError: Failed to fetch</code>,
-        download it and open in your browser from disk, or serve it locally (e.g., <code>npx serve</code>).
-        ESPN sometimes blocks CORS; we auto-fallback to an inline test schedule when that happens.
-      </div>
-    </details>
+    <div id="status" class="status"></div>
 
-    <div class="footer">
-      Data sources: <span class="badge">Sleeper API</span> &amp; <span class="badge">ESPN public scoreboard</span>.
-      Runs fully in your browser. Player data cached locally for 24h.
-    </div>
+    <main id="dashboard" class="dashboard"></main>
+
+    <footer class="footer">
+      Data: <span class="badge">Sleeper API</span> <span class="badge">ESPN scoreboard</span> ·
+      Runs entirely in your browser · Player data cached 24h · Scores auto-refresh during live games.
+    </footer>
   </div>
 
-  <!-- Modal (O7: accessibility improvements) -->
-  <div id="modal" class="modal" role="dialog" aria-hidden="true" aria-label="Player details">
-    <div class="modal-sheet">
-      <div class="modal-head">
-        <div id="modalTitle" class="modal-title"></div>
-        <button id="modalClose" aria-label="Close dialog">Close</button>
-      </div>
-      <div id="modalBody" class="modal-body"></div>
-    </div>
-  </div>
-
-  <!-- Scripts: loaded in order (no modules, works from file://) -->
   <script src="js/utils.js"></script>
   <script src="js/api.js"></script>
+  <script src="js/demo.js"></script>
   <script src="js/render.js"></script>
   <script src="js/app.js"></script>
 </body>

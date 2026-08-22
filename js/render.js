@@ -1,9 +1,8 @@
 /* ============================================================
-   Render — DOM rendering for matches, players, sparklines,
-            bye weeks, modal, and watchlist
+   Render — Dashboard: summary bar, team matchup cards
    ============================================================ */
 
-// --- Render Week Options ---
+// --- Week options ---
 function renderWeeks(n = 18) {
   const sel = $('#week');
   sel.innerHTML = '';
@@ -15,426 +14,288 @@ function renderWeeks(n = 18) {
   }
 }
 
-// --- Render League Options ---
-function renderLeagues() {
-  const sel = $('#league');
+// --- League filter options ---
+function renderLeagueFilter() {
+  const sel = $('#leagueFilter');
+  if (!sel) return;
+  const cur = state.filterLeague;
   sel.innerHTML = '';
-  const any = $el('option');
-  any.value = '*';
-  any.textContent = 'All leagues';
-  sel.appendChild(any);
+  const all = $el('option', null, 'All leagues');
+  all.value = '*';
+  sel.appendChild(all);
   for (const lg of state.leagues) {
     const o = $el('option');
     o.value = lg.league_id;
     o.textContent = lg.name || lg.league_id;
     sel.appendChild(o);
   }
+  sel.value = [...sel.options].some(o => o.value === cur) ? cur : '*';
 }
 
-// --- Injury Badge (F2) ---
-function injuryBadge(injuryStatus) {
-  if (!injuryStatus) return '';
+// --- Injury badge ---
+function injuryBadge(status) {
+  if (!status) return '';
   const map = {
-    'Questionable': { cls: 'inj-questionable', label: 'Q' },
-    'Doubtful': { cls: 'inj-doubtful', label: 'D' },
-    'Out': { cls: 'inj-out', label: 'OUT' },
-    'IR': { cls: 'inj-ir', label: 'IR' },
-    'PUP': { cls: 'inj-pup', label: 'PUP' },
-    'Suspended': { cls: 'inj-sus', label: 'SUS' }
+    Questionable: ['inj-q', 'Q'], Doubtful: ['inj-d', 'D'],
+    Out: ['inj-out', 'OUT'], IR: ['inj-ir', 'IR'],
+    PUP: ['inj-pup', 'PUP'], Suspended: ['inj-sus', 'SUS'], COV: ['inj-sus', 'COV']
   };
-  const info = map[injuryStatus];
-  if (!info) return `<span class="inj inj-questionable" title="${injuryStatus}">${injuryStatus.substring(0, 3).toUpperCase()}</span>`;
-  return `<span class="inj ${info.cls}" title="${injuryStatus}">${info.label}</span>`;
+  const info = map[status] || ['inj-q', status.slice(0, 3).toUpperCase()];
+  return `<span class="inj ${info[0]}" title="${esc(status)}">${esc(info[1])}</span>`;
 }
 
-// --- Sparkline SVG (F7) ---
-function renderSparkline(points) {
-  if (!points || points.length < 2) return '';
-  const w = 50, h = 16, pad = 2;
-  const max = Math.max(...points, 1);
-  const min = Math.min(...points, 0);
-  const range = max - min || 1;
-  const coords = points.map((p, i) => {
-    const x = pad + (i / (points.length - 1)) * (w - pad * 2);
-    const y = pad + (1 - (p - min) / range) * (h - pad * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-  const trending = points[points.length - 1] >= points[0];
-  const color = trending ? '#34d399' : '#f87171';
-  return `<svg class="sparkline" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-    <polyline fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" points="${coords.join(' ')}" />
-  </svg>`;
+// --- Avatar element (image or initials) ---
+function avatarEl(url, name, size = 'md') {
+  const wrap = $el('div', `avatar avatar-${size}`);
+  if (url) {
+    const img = $el('img');
+    img.src = url;
+    img.alt = '';
+    img.loading = 'lazy';
+    img.onerror = () => { img.remove(); wrap.textContent = initials(name); };
+    wrap.appendChild(img);
+  } else {
+    wrap.textContent = initials(name);
+  }
+  return wrap;
 }
 
-// --- Build Player List ---
-function buildList(rows, options = {}) {
-  const { showOpponentLabel = false, showFavStar = true } = options;
-  const list = $el('div', 'list');
+// --- Summary bar across all leagues ---
+function renderSummary() {
+  const host = $('#summary');
+  host.innerHTML = '';
+  const cards = state.cards;
+  if (!cards.length) { host.style.display = 'none'; return; }
+  host.style.display = '';
 
-  // Header row
-  const header = $el('div', 'player');
-  header.style.position = 'sticky';
-  header.style.top = '0';
-  header.style.zIndex = '2';
-  header.style.backdropFilter = 'blur(6px)';
-  header.innerHTML = `<strong>Player</strong><strong>Pos</strong><strong>Team</strong><strong>League</strong><strong>Pts</strong><strong>Trend</strong>`;
-  list.appendChild(header);
+  const withM = cards.filter(c => c.hasMatchup);
+  const winning = withM.filter(c => c.result === 'winning').length;
+  const losing = withM.filter(c => c.result === 'losing').length;
+  const tied = withM.filter(c => c.result === 'tie').length;
+  const totalRec = cards.reduce((a, c) => {
+    a.w += c.record.w; a.l += c.record.l; a.t += c.record.t; return a;
+  }, { w: 0, l: 0, t: 0 });
+  const anyLive = state.schedule.some(g => g.live);
 
-  for (const r of rows) {
-    const row = $el('div', 'player' + (r.isOpponent ? ' opponent-row' : ''));
-    const injBadge = injuryBadge(r.injury);
-    const sparkSvg = renderSparkline(r.sparkline);
-    const oppLabel = r.isOpponent ? ' <span class="muted" style="font-size:11px">(OPP)</span>' : '';
+  const stat = (val, label, cls) => {
+    const d = $el('div', 'stat' + (cls ? ' ' + cls : ''));
+    d.appendChild($el('div', 'stat-val', String(val)));
+    d.appendChild($el('div', 'stat-label', label));
+    return d;
+  };
 
-    let starHtml = '';
-    if (showFavStar && r.pid) {
-      const isActive = state.favorites.has(r.pid);
-      starHtml = `<button class="star-btn ${isActive ? 'active' : ''}" data-pid="${r.pid}" title="Toggle favorite" aria-label="Toggle favorite for ${r.name}">${isActive ? '\u2605' : '\u2606'}</button>`;
-    }
+  host.appendChild(stat(cards.length, cards.length === 1 ? 'League' : 'Leagues'));
+  if (withM.length) {
+    host.appendChild(stat(winning, 'Winning', 'good'));
+    host.appendChild(stat(losing, 'Losing', 'bad'));
+    if (tied) host.appendChild(stat(tied, 'Tied'));
+  }
+  host.appendChild(stat(`${totalRec.w}-${totalRec.l}${totalRec.t ? '-' + totalRec.t : ''}`, 'Overall record'));
 
-    row.innerHTML = `
-      <div class="player-name-cell">${starHtml}${r.name}${oppLabel} ${injBadge}</div>
-      <div class="muted">${r.pos}</div>
-      <div>${r.team}</div>
-      <div class="muted">${r.league}</div>
-      <div><strong>${r.pts}</strong></div>
-      <div>${sparkSvg}</div>
-    `;
-    list.appendChild(row);
+  if (anyLive) {
+    const live = $el('div', 'stat live-stat');
+    live.innerHTML = `<div class="stat-val"><span class="live-dot"></span>LIVE</div><div class="stat-label">Games in progress</div>`;
+    host.appendChild(live);
+  }
+}
+
+// --- One team-matchup card ---
+function matchupCard(card) {
+  const el = $el('details', 'tcard result-' + card.result);
+  const me = card.me, opp = card.opp;
+
+  // ---- Summary (always visible) ----
+  const summary = $el('summary', 'tcard-head');
+
+  // League row
+  const top = $el('div', 'tcard-league');
+  top.appendChild(avatarEl(card.leagueAvatar, card.leagueName, 'sm'));
+  const lname = $el('div', 'tcard-league-name');
+  lname.textContent = card.leagueName;
+  top.appendChild(lname);
+  const rec = $el('span', 'record-badge', `${card.record.w}-${card.record.l}${card.record.t ? '-' + card.record.t : ''}`);
+  top.appendChild(rec);
+  summary.appendChild(top);
+
+  if (card.hasMatchup) {
+    // Scoreline: me vs opp
+    const score = $el('div', 'scoreline');
+
+    const teamCol = (t, isMe, win) => {
+      const col = $el('div', 'team-col' + (isMe ? ' me' : '') + (win ? ' winner' : ''));
+      col.appendChild(avatarEl(t.avatar, t.name, 'md'));
+      const info = $el('div', 'team-info');
+      const nm = $el('div', 'team-name');
+      nm.textContent = t.name;
+      info.appendChild(nm);
+      const meta = $el('div', 'team-meta');
+      meta.textContent = t.yetToPlay > 0 ? `${t.yetToPlay} yet to play` : 'all played';
+      info.appendChild(meta);
+      col.appendChild(info);
+      const pts = $el('div', 'team-pts');
+      pts.textContent = fmtPts(t.total);
+      col.appendChild(pts);
+      return col;
+    };
+
+    const meWin = card.result === 'winning';
+    const oppWin = card.result === 'losing';
+    score.appendChild(teamCol(me, true, meWin));
+    const vs = $el('div', 'vs');
+    vs.innerHTML = card.result === 'tie' ? 'TIE' : (meWin ? 'WIN' : oppWin ? 'LOSS' : 'VS');
+    vs.className = 'vs ' + (meWin ? 'vs-win' : oppWin ? 'vs-loss' : 'vs-tie');
+    score.appendChild(vs);
+    score.appendChild(teamCol(opp, false, oppWin));
+    summary.appendChild(score);
+
+    // Win bar
+    const total = me.total + opp.total;
+    const pct = total > 0 ? (me.total / total) * 100 : 50;
+    const bar = $el('div', 'winbar');
+    const fill = $el('div', 'winbar-fill');
+    fill.style.width = pct.toFixed(1) + '%';
+    bar.appendChild(fill);
+    summary.appendChild(bar);
+  } else {
+    const noM = $el('div', 'no-matchup');
+    noM.textContent = me ? `${me.name} · no matchup scheduled this week` : 'No matchup this week';
+    summary.appendChild(noM);
   }
 
-  // Wire up star buttons
-  list.querySelectorAll('.star-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+  const hint = $el('div', 'expand-hint');
+  hint.innerHTML = `<span class="chev">▸</span> Head-to-head lineup`;
+  summary.appendChild(hint);
+  el.appendChild(summary);
+
+  // ---- Expanded body: side-by-side starters ----
+  const body = $el('div', 'tcard-body');
+  if (card.hasMatchup && me && opp) {
+    body.appendChild(lineupTable(card));
+  } else if (me) {
+    body.appendChild(singleLineup(me));
+  }
+  el.appendChild(body);
+
+  return el;
+}
+
+// --- Head-to-head lineup table (me | slot | opp) ---
+function lineupTable(card) {
+  const me = card.me, opp = card.opp;
+  const rows = Math.max(me.lineup.length, opp.lineup.length);
+  const table = $el('div', 'lineup');
+
+  const cell = (p, isMe, better) => {
+    const c = $el('div', 'lu-cell' + (isMe ? ' lu-me' : ' lu-opp') + (better ? ' lu-better' : ''));
+    if (!p || p.empty) {
+      c.innerHTML = `<span class="lu-empty">—</span>`;
+      return c;
+    }
+    const star = p.pid
+      ? `<button class="star ${state.favorites.has(p.pid) ? 'on' : ''}" data-pid="${p.pid}" title="Star player" aria-label="Star ${esc(p.name)}">${state.favorites.has(p.pid) ? '★' : '☆'}</button>`
+      : '';
+    const g = p.game || { text: '', kind: 'none' };
+    const nameHtml = `<span class="lu-name">${esc(p.name)}</span>${p.injury ? ' ' + injuryBadge(p.injury) : ''}`;
+    const teamHtml = `<span class="lu-team">${esc(p.team || 'FA')}</span> <span class="game game-${g.kind}">${esc(g.text)}</span>`;
+    if (isMe) {
+      c.innerHTML = `<div class="lu-pts">${fmtPts(p.pts)}</div><div class="lu-txt">${nameHtml}<div class="lu-sub">${teamHtml}</div></div>${star}`;
+    } else {
+      c.innerHTML = `${star}<div class="lu-txt lu-right">${nameHtml}<div class="lu-sub">${teamHtml}</div></div><div class="lu-pts">${fmtPts(p.pts)}</div>`;
+    }
+    return c;
+  };
+
+  for (let i = 0; i < rows; i++) {
+    const mp = me.lineup[i], op = opp.lineup[i];
+    const slot = (mp && mp.slot) || (op && op.slot) || '-';
+    const row = $el('div', 'lu-row');
+    const mBetter = mp && op && mp.pts > op.pts && !mp.empty;
+    const oBetter = mp && op && op.pts > mp.pts && !op.empty;
+    row.appendChild(cell(mp, true, mBetter));
+    const s = $el('div', `lu-slot ${posClass(slot)}`);
+    s.textContent = slot;
+    row.appendChild(s);
+    row.appendChild(cell(op, false, oBetter));
+    table.appendChild(row);
+  }
+
+  // Totals row
+  const totals = $el('div', 'lu-row lu-totals');
+  const mt = $el('div', 'lu-cell lu-me' + (card.result === 'winning' ? ' lu-better' : ''));
+  mt.innerHTML = `<div class="lu-pts">${fmtPts(me.total)}</div><div class="lu-txt">TOTAL</div>`;
+  totals.appendChild(mt);
+  totals.appendChild($el('div', 'lu-slot', 'Σ'));
+  const ot = $el('div', 'lu-cell lu-opp' + (card.result === 'losing' ? ' lu-better' : ''));
+  ot.innerHTML = `<div class="lu-txt lu-right">TOTAL</div><div class="lu-pts">${fmtPts(opp.total)}</div>`;
+  totals.appendChild(ot);
+  table.appendChild(totals);
+
+  wireStars(table);
+  return table;
+}
+
+// --- Single lineup (no opponent) ---
+function singleLineup(me) {
+  const table = $el('div', 'lineup single');
+  for (const p of me.lineup) {
+    const row = $el('div', 'lu-row single-row');
+    const s = $el('div', `lu-slot ${posClass(p.slot)}`);
+    s.textContent = p.slot;
+    row.appendChild(s);
+    const g = p.game || { text: '', kind: 'none' };
+    const star = p.pid
+      ? `<button class="star ${state.favorites.has(p.pid) ? 'on' : ''}" data-pid="${p.pid}" aria-label="Star ${esc(p.name)}">${state.favorites.has(p.pid) ? '★' : '☆'}</button>`
+      : '';
+    const c = $el('div', 'lu-cell lu-me');
+    c.innerHTML = p.empty ? '<span class="lu-empty">—</span>'
+      : `${star}<div class="lu-txt"><span class="lu-name">${esc(p.name)}</span>${p.injury ? ' ' + injuryBadge(p.injury) : ''}<div class="lu-sub"><span class="lu-team">${esc(p.team || 'FA')}</span> <span class="game game-${g.kind}">${esc(g.text)}</span></div></div><div class="lu-pts">${fmtPts(p.pts)}</div>`;
+    row.appendChild(c);
+    table.appendChild(row);
+  }
+  wireStars(table);
+  return table;
+}
+
+function wireStars(scope) {
+  scope.querySelectorAll('.star').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
       e.stopPropagation();
       const pid = btn.dataset.pid;
       toggleFavorite(pid);
-      btn.classList.toggle('active');
-      btn.textContent = state.favorites.has(pid) ? '\u2605' : '\u2606';
-      renderWatchlist(); // update watchlist section
+      const on = state.favorites.has(pid);
+      btn.classList.toggle('on', on);
+      btn.textContent = on ? '★' : '☆';
     });
   });
-
-  return list;
 }
 
-// --- Render Match Cards ---
-function renderMatches() {
-  const host = $('#matches');
+// --- Render the whole dashboard grid ---
+function renderDashboard() {
+  renderSummary();
+  const host = $('#dashboard');
   host.innerHTML = '';
-  if (!state.schedule.length) {
-    host.appendChild($el('div', 'empty', 'No games found for this week.'));
-    return;
-  }
 
-  const ownedByTeam = new Map();
-  for (const [, entry] of state.owned) {
-    const t = normalizeTeamTag(entry.player?.team);
-    if (!t) continue;
-    ownedByTeam.set(t, (ownedByTeam.get(t) || 0) + 1);
-  }
-
-  const sched = [...state.schedule].sort((a, b) => {
-    const ta = a.kickoff ? new Date(a.kickoff).getTime() : 0;
-    const tb = b.kickoff ? new Date(b.kickoff).getTime() : 0;
-    return ta - tb;
-  });
-
-  for (const g of sched) {
-    const card = $el('div', 'match');
-    const teams = $el('div', 'teams');
-    const txt = (label, score) => (score == null ? label : `${label} ${score}`);
-    teams.innerHTML = `<span>${txt(g.away, g.away_score)}</span><span> @ </span><span>${txt(g.home, g.home_score)}</span>`;
-    card.appendChild(teams);
-
-    const sub = $el('div', 'sub');
-    const ko = g.kickoff ? new Date(g.kickoff) : null;
-    sub.textContent = g.status && g.status !== 'Scheduled'
-      ? g.status
-      : (ko ? `Kick: ${ko.toLocaleString()}` : 'Kick: TBA');
-    card.appendChild(sub);
-
-    const counts = $el('div');
-    const ap = ownedByTeam.get(normalizeTeamTag(g.away)) || 0;
-    const hp = ownedByTeam.get(normalizeTeamTag(g.home)) || 0;
-    counts.appendChild($el('span', 'pill', `${g.away} \u00B7 ${ap} on your roster`));
-    counts.appendChild($el('span', 'pill', `${g.home} \u00B7 ${hp} on your roster`));
-    counts.style.display = 'flex';
-    counts.style.gap = '8px';
-    counts.style.flexWrap = 'wrap';
-    card.appendChild(counts);
-
-    const btn = $el('button', null, 'Show my players in this game');
-    btn.setAttribute('aria-label', `Show your players in ${g.away} at ${g.home}`);
-    btn.addEventListener('click', () => selectMatch(g));
-    card.appendChild(btn);
-
-    host.appendChild(card);
-  }
-}
-
-// --- Render Bye Week Section (F1) ---
-function renderByeWeek() {
-  const container = $('#byeSection');
-  if (!container) return;
-  container.innerHTML = '';
-
-  if (!state.schedule.length || !state.owned.size) return;
-
-  const teamsPlaying = new Set();
-  for (const g of state.schedule) {
-    teamsPlaying.add(normalizeTeamTag(g.home));
-    teamsPlaying.add(normalizeTeamTag(g.away));
-  }
-
-  const byePlayers = [];
-  for (const [pid, entry] of state.owned) {
-    const team = normalizeTeamTag(entry.player?.team);
-    if (team && !teamsPlaying.has(team)) {
-      byePlayers.push({
-        name: entry.player.full_name || entry.player.last_name || pid,
-        team,
-        pos: entry.player.position || '-',
-        injury: entry.player.injury_status
-      });
-    }
-  }
-
-  if (!byePlayers.length) return;
-
-  const section = $el('div', 'bye-section');
-  const title = $el('h3', null, `Players on Bye (${byePlayers.length})`);
-  section.appendChild(title);
-
-  const list = $el('div', 'bye-list');
-  byePlayers.sort((a, b) => a.pos.localeCompare(b.pos) || a.name.localeCompare(b.name));
-  for (const p of byePlayers) {
-    const inj = p.injury ? ` ${injuryBadge(p.injury)}` : '';
-    const pill = $el('span', 'bye-pill');
-    pill.innerHTML = `${p.pos} ${p.name} (${p.team})${inj}`;
-    list.appendChild(pill);
-  }
-  section.appendChild(list);
-  container.appendChild(section);
-}
-
-// --- Render Watchlist (F8) ---
-function renderWatchlist() {
-  const container = $('#watchlistSection');
-  if (!container) return;
-  container.innerHTML = '';
-
-  if (!state.favorites.size || !state.owned.size) return;
-
-  const watchPlayers = [];
-  for (const pid of state.favorites) {
-    const entry = state.owned.get(pid);
-    if (!entry) continue;
-    const p = entry.player;
-    const team = normalizeTeamTag(p?.team);
-    const game = state.schedule.find(g =>
-      normalizeTeamTag(g.home) === team || normalizeTeamTag(g.away) === team
-    );
-    watchPlayers.push({
-      name: p.full_name || p.last_name || pid,
-      pos: p.position || '-',
-      team: team || 'FA',
-      injury: p.injury_status,
-      matchup: game ? `${game.away} @ ${game.home}` : 'BYE',
-      status: game?.status || ''
+  let cards = state.cards;
+  if (state.filterLeague !== '*') cards = cards.filter(c => c.leagueId === state.filterLeague);
+  if (state.filterResult !== 'all') cards = cards.filter(c => c.result === state.filterResult);
+  if (state.onlyStarred) {
+    cards = cards.filter(c => {
+      const all = [...(c.me?.lineup || []), ...(c.opp?.lineup || [])];
+      return all.some(p => p.pid && state.favorites.has(p.pid));
     });
   }
 
-  if (!watchPlayers.length) return;
-
-  const section = $el('div', 'watchlist-section');
-  const title = $el('h3');
-  title.innerHTML = `\u2605 Watchlist (${watchPlayers.length})`;
-  section.appendChild(title);
-
-  const list = $el('div', 'bye-list');
-  for (const p of watchPlayers) {
-    const inj = p.injury ? ` ${injuryBadge(p.injury)}` : '';
-    const pill = $el('span', 'bye-pill');
-    pill.innerHTML = `${p.pos} ${p.name} (${p.team}) \u2014 ${p.matchup}${inj}`;
-    list.appendChild(pill);
+  if (!state.cards.length) {
+    host.appendChild($el('div', 'empty', state.user
+      ? 'No leagues found for this user in the selected season.'
+      : 'Enter your Sleeper username above and hit Load to see all your teams.'));
+    return;
   }
-  section.appendChild(list);
-  container.appendChild(section);
-}
-
-// --- Select Match & Show Players ---
-async function selectMatch(g) {
-  state.selectedMatch = g;
-  const title = $('#pickedTitle');
-  title.textContent = `Selected: ${g.away} @ ${g.home}`;
-
-  const teamSet = new Set([normalizeTeamTag(g.away), normalizeTeamTag(g.home)]);
-  const leagueFilter = $('#league').value;
-  const season = Number($('#season').value);
-  const week = Number($('#week').value);
-
-  const key = await ensureWeekStats();
-
-  // F7: Fetch recent stats for sparklines
-  await ensureRecentStats(season, week);
-
-  // --- My players ---
-  const rows = [];
-  for (const [pid, entry] of state.owned) {
-    const p = entry.player;
-    const tm = normalizeTeamTag(p?.team);
-    if (!teamSet.has(tm)) continue;
-    const name = p.full_name || [p.first_name || '', p.last_name || ''].join(' ').trim() || (p.last_name || p.first_name || `#${p.number || ''}`);
-    const arr = (leagueFilter === '*') ? entry.leagues : entry.leagues.filter(l => l.id === leagueFilter);
-    for (const L of arr) {
-      const pts = calcPoints(pid, L.id, key);
-      const sparkline = getSparklineData(pid, L.id, season, week);
-      rows.push({
-        pid,
-        name,
-        pos: p.position || '-',
-        team: tm || 'FA',
-        league: L.name,
-        pts,
-        injury: p.injury_status,
-        sparkline,
-        isOpponent: false
-      });
-    }
-  }
-
-  // F6: Opponent players
-  const oppRows = [];
-  if (leagueFilter !== '*') {
-    const oppPids = getOpponentPlayers(leagueFilter);
-    for (const pid of oppPids) {
-      const p = state.playersIndex[pid];
-      if (!p) continue;
-      const tm = normalizeTeamTag(p.team);
-      if (!teamSet.has(tm)) continue;
-      // Skip if already in my roster
-      if (state.owned.has(pid)) continue;
-      const name = p.full_name || [p.first_name || '', p.last_name || ''].join(' ').trim() || `#${p.number || ''}`;
-      const pts = calcPoints(pid, leagueFilter, key);
-      const sparkline = getSparklineData(pid, leagueFilter, season, week);
-      oppRows.push({
-        pid,
-        name,
-        pos: p.position || '-',
-        team: tm || 'FA',
-        league: 'Opponent',
-        pts,
-        injury: p.injury_status,
-        sparkline,
-        isOpponent: true
-      });
-    }
-  } else if (state.leagues.length) {
-    // Show opponents across all leagues
-    for (const lg of state.leagues) {
-      const oppPids = getOpponentPlayers(lg.league_id);
-      for (const pid of oppPids) {
-        const p = state.playersIndex[pid];
-        if (!p) continue;
-        const tm = normalizeTeamTag(p.team);
-        if (!teamSet.has(tm)) continue;
-        if (state.owned.has(pid)) continue;
-        // Avoid duplicates
-        if (oppRows.some(r => r.pid === pid && r.league === `OPP (${lg.name})`)) continue;
-        const name = p.full_name || [p.first_name || '', p.last_name || ''].join(' ').trim() || `#${p.number || ''}`;
-        const pts = calcPoints(pid, lg.league_id, key);
-        const sparkline = getSparklineData(pid, lg.league_id, season, week);
-        oppRows.push({
-          pid,
-          name,
-          pos: p.position || '-',
-          team: tm || 'FA',
-          league: `OPP (${lg.name})`,
-          pts,
-          injury: p.injury_status,
-          sparkline,
-          isOpponent: true
-        });
-      }
-    }
-  }
-
-  rows.sort((a, b) => a.league.localeCompare(b.league) || (a.team === b.team ? (a.pos.localeCompare(b.pos) || a.name.localeCompare(b.name)) : a.team.localeCompare(b.team)));
-  oppRows.sort((a, b) => a.pos.localeCompare(b.pos) || a.name.localeCompare(b.name));
-
-  const allRows = [...rows, ...oppRows];
-  state.lastExportRows = allRows; // F3: save for export
-
-  const isMobile = window.matchMedia('(max-width:900px)').matches;
-
-  if (isMobile) {
-    if (!allRows.length) {
-      openModal(`${g.away} @ ${g.home}`, $el('div', 'empty', 'You don\'t roster any players in this matchup (for the selected league filter).'));
-      return;
-    }
-    const content = $el('div');
-    content.appendChild(buildExportButton(allRows, g));
-    content.appendChild(buildList(allRows));
-    openModal(`${g.away} @ ${g.home}`, content);
+  if (!cards.length) {
+    host.appendChild($el('div', 'empty', 'No teams match the current filters.'));
     return;
   }
 
-  const host = $('#players');
-  host.innerHTML = '';
-  if (!allRows.length) {
-    host.appendChild($el('div', 'empty', 'You don\'t roster any players in this matchup (for the selected league filter).'));
-    return;
-  }
-  host.appendChild(buildExportButton(allRows, g));
-  host.appendChild(buildList(allRows));
-}
-
-// --- Modal ---
-function openModal(title, node) {
-  $('#modalTitle').textContent = title;
-  const b = $('#modalBody');
-  b.innerHTML = '';
-  b.appendChild(node);
-  const modal = $('#modal');
-  modal.classList.add('open');
-  modal.setAttribute('aria-hidden', 'false');
-  // Focus trap: focus the close button
-  $('#modalClose').focus();
-}
-
-function closeModal() {
-  const modal = $('#modal');
-  modal.classList.remove('open');
-  modal.setAttribute('aria-hidden', 'true');
-}
-
-// --- Export Button (F3) ---
-function buildExportButton(rows, game) {
-  const wrapper = $el('div');
-  wrapper.style.display = 'flex';
-  wrapper.style.justifyContent = 'flex-end';
-  wrapper.style.marginBottom = '8px';
-
-  const btn = $el('button', 'export-btn', 'Copy to Clipboard');
-  btn.setAttribute('aria-label', 'Copy player list to clipboard');
-  btn.addEventListener('click', () => {
-    const header = game ? `${game.away} @ ${game.home}\n${'='.repeat(40)}\n` : '';
-    const lines = rows.map(r => {
-      const opp = r.isOpponent ? ' (OPP)' : '';
-      const inj = r.injury ? ` [${r.injury}]` : '';
-      return `${r.pos.padEnd(4)} ${r.name}${opp}${inj}  ${r.team}  ${r.league}  ${r.pts} pts`;
-    });
-    const text = header + lines.join('\n');
-    navigator.clipboard.writeText(text).then(() => {
-      btn.textContent = 'Copied!';
-      setTimeout(() => { btn.textContent = 'Copy to Clipboard'; }, 2000);
-    }).catch(() => {
-      btn.textContent = 'Failed to copy';
-      setTimeout(() => { btn.textContent = 'Copy to Clipboard'; }, 2000);
-    });
-  });
-
-  wrapper.appendChild(btn);
-  return wrapper;
+  for (const card of cards) host.appendChild(matchupCard(card));
 }
