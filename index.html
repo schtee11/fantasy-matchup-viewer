@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>My Fantasy Teams — one view</title>
+  <title>Fantasy Command Center</title>
   <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
@@ -13,8 +13,8 @@
       <div class="brand">
         <span class="brand-mark">🏈</span>
         <div>
-          <h1>My Fantasy Teams</h1>
-          <div class="brand-sub">All your Sleeper leagues, one view</div>
+          <h1>Fantasy Command Center</h1>
+          <div class="brand-sub">Every league, game, and player — live, in one place</div>
         </div>
       </div>
       <button id="themeToggle" class="icon-btn" title="Toggle theme" aria-label="Toggle dark or light theme">☀️</button>
@@ -39,43 +39,35 @@
       </div>
       <div class="control">
         <label>&nbsp;</label>
-        <button id="demoBtn" class="ghost" title="See a sample dashboard with no login">Demo</button>
+        <button id="demoBtn" class="ghost" title="See a live sample with no login">Demo</button>
       </div>
     </section>
 
-    <div id="summary" class="summary"></div>
-
-    <div class="toolbar">
-      <div class="toolbar-left">
-        <div class="tabs" role="tablist" aria-label="Filter by result">
-          <button class="result-tab active" data-result="all">All</button>
-          <button class="result-tab" data-result="winning">Winning</button>
-          <button class="result-tab" data-result="losing">Losing</button>
-        </div>
-        <select id="leagueFilter" class="league-filter" aria-label="Filter by league">
-          <option value="*">All leagues</option>
-        </select>
-        <button id="starredToggle" class="chip-btn" title="Show only teams with starred players">★ Starred</button>
-      </div>
-      <div class="toolbar-right">
-        <button id="expandAll" class="chip-btn">Expand all</button>
-      </div>
+    <div id="livebar" class="livebar" style="display:none">
+      <div id="lbStatus" class="lb-status"></div>
+      <button id="lbRefresh" class="chip-btn" title="Refresh now">↻ Refresh</button>
     </div>
+
+    <nav id="viewnav" class="viewnav" aria-label="Views"></nav>
 
     <div id="status" class="status"></div>
 
-    <main id="dashboard" class="dashboard"></main>
+    <main id="view" class="view"></main>
 
     <footer class="footer">
       Data: <span class="badge">Sleeper API</span> <span class="badge">ESPN scoreboard</span> ·
-      Runs entirely in your browser · Player data cached 24h · Scores auto-refresh during live games.
+      Runs entirely in your browser · Player data cached 24h · Scores auto-refresh (~15s) during live games.
     </footer>
   </div>
 
   <script src="js/utils.js"></script>
   <script src="js/api.js"></script>
   <script src="js/demo.js"></script>
-  <script src="js/render.js"></script>
+  <script src="js/render-common.js"></script>
+  <script src="js/view-matchups.js"></script>
+  <script src="js/view-games.js"></script>
+  <script src="js/view-players.js"></script>
+  <script src="js/view-insights.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
