@@ -1,8 +1,7 @@
 /* ============================================================
-   API Layer — Sleeper + ESPN with retry & error handling
+   API Layer — Sleeper + ESPN, plus dashboard model builder
    ============================================================ */
 
-// --- Fetch with Retry (O6) ---
 async function jsonFetch(url, retries = 1) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -10,10 +9,7 @@ async function jsonFetch(url, retries = 1) {
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
       return await res.json();
     } catch (e) {
-      if (attempt < retries) {
-        await sleep(2000);
-        continue;
-      }
+      if (attempt < retries) { await sleep(1500); continue; }
       throw new Error(`Failed to fetch ${url}: ${e.message}`);
     }
   }
@@ -21,34 +17,17 @@ async function jsonFetch(url, retries = 1) {
 
 // --- Sleeper API ---
 const sleeper = {
-  async getState() {
-    return jsonFetch('https://api.sleeper.app/v1/state/nfl');
-  },
-  async getUser(username) {
-    return jsonFetch(`https://api.sleeper.app/v1/user/${encodeURIComponent(username)}`);
-  },
-  async getLeagues(userId, season) {
-    return jsonFetch(`https://api.sleeper.app/v1/user/${userId}/leagues/nfl/${season}`);
-  },
-  async getLeague(leagueId) {
-    return jsonFetch(`https://api.sleeper.app/v1/league/${leagueId}`);
-  },
-  async getRosters(leagueId) {
-    return jsonFetch(`https://api.sleeper.app/v1/league/${leagueId}/rosters`);
-  },
-  async getPlayers() {
-    return jsonFetch('https://api.sleeper.app/v1/players/nfl');
-  },
-  async getWeekStats(season, week) {
-    return jsonFetch(`https://api.sleeper.app/v1/stats/nfl/regular/${season}/${week}`);
-  },
-  // F6: Opponent Roster — league matchups for a week
-  async getMatchups(leagueId, week) {
-    return jsonFetch(`https://api.sleeper.app/v1/league/${leagueId}/matchups/${week}`);
-  }
+  getState:    () => jsonFetch('https://api.sleeper.app/v1/state/nfl'),
+  getUser:     u  => jsonFetch(`https://api.sleeper.app/v1/user/${encodeURIComponent(u)}`),
+  getLeagues:  (uid, season) => jsonFetch(`https://api.sleeper.app/v1/user/${uid}/leagues/nfl/${season}`),
+  getLeague:   id => jsonFetch(`https://api.sleeper.app/v1/league/${id}`),
+  getRosters:  id => jsonFetch(`https://api.sleeper.app/v1/league/${id}/rosters`),
+  getLeagueUsers: id => jsonFetch(`https://api.sleeper.app/v1/league/${id}/users`),
+  getPlayers:  () => jsonFetch('https://api.sleeper.app/v1/players/nfl'),
+  getMatchups: (id, week) => jsonFetch(`https://api.sleeper.app/v1/league/${id}/matchups/${week}`)
 };
 
-// --- ESPN Schedule Provider ---
+// --- ESPN schedule (for per-player NFL game status) ---
 const scheduleProvider = {
   async espn(year, week) {
     const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?year=${year}&week=${week}&seasontype=2`;
@@ -59,170 +38,184 @@ const scheduleProvider = {
       const h = c?.competitors?.find(x => x.homeAway === 'home');
       const a = c?.competitors?.find(x => x.homeAway === 'away');
       const toSym = t => t?.team?.abbreviation || t?.team?.displayName || 'TBD';
-      const status = c?.status;
-      const type = status?.type;
-      let st = '';
+      const status = c?.status, type = status?.type;
+      let st = '', live = false;
       if (type?.completed) st = 'Final';
-      else if (type?.state === 'pre') st = 'Scheduled';
-      else if (type?.state === 'in') st = status?.period ? `Q${status.period} ${status.displayClock || ''}`.trim() : 'Live';
+      else if (type?.state === 'pre') st = 'pre';
+      else if (type?.state === 'in') { st = status?.period ? `Q${status.period} ${status.displayClock || ''}`.trim() : 'Live'; live = true; }
       else st = type?.description || '';
       return {
-        id: ev.id,
-        week,
+        id: ev.id, week,
         kickoff: c?.date || ev?.date,
-        home: toSym(h),
-        away: toSym(a),
+        home: normalizeTeamTag(toSym(h)),
+        away: normalizeTeamTag(toSym(a)),
         home_score: h?.score != null ? Number(h.score) : null,
         away_score: a?.score != null ? Number(a.score) : null,
-        status: st
+        status: st, live
       };
     });
-  },
-  async inline(year, week) {
-    return INLINE_TEST_SCHEDULE.filter(g => g.year === year && g.week === week).map(g => ({ ...g }));
   }
 };
 
-// --- Slim Player Index Builder ---
-function buildSlimPlayerIndex(rawIndex) {
+// --- Build team -> game index and human-friendly status ---
+function indexSchedule() {
+  state.scheduleByTeam = new Map();
+  for (const g of state.schedule) {
+    if (g.home) state.scheduleByTeam.set(g.home, g);
+    if (g.away) state.scheduleByTeam.set(g.away, g);
+  }
+}
+
+function gameStatusFor(team) {
+  const t = normalizeTeamTag(team);
+  if (!t) return { text: '', kind: 'none' };
+  const g = state.scheduleByTeam.get(t);
+  if (!g) return { text: 'BYE', kind: 'bye' };
+  const opp = g.home === t ? g.away : g.home;
+  const homeAway = g.home === t ? 'vs' : '@';
+  if (g.status === 'Final') return { text: `Final ${homeAway} ${opp}`, kind: 'final' };
+  if (g.live) return { text: g.status, kind: 'live' };
+  // pre / scheduled
+  const ko = g.kickoff ? new Date(g.kickoff) : null;
+  const when = ko ? ko.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'TBA';
+  return { text: `${homeAway} ${opp} · ${when}`, kind: 'pre' };
+}
+
+// --- Slim player index builder ---
+function buildSlimPlayerIndex(raw) {
   const slim = {};
-  for (const [k, v] of Object.entries(rawIndex)) {
+  for (const [k, v] of Object.entries(raw)) {
     slim[k] = {
-      full_name: v.full_name,
-      first_name: v.first_name,
-      last_name: v.last_name,
+      full_name: v.full_name || [v.first_name, v.last_name].filter(Boolean).join(' '),
       team: v.team,
       position: v.position,
-      number: v.number,
-      injury_status: v.injury_status || null  // F2: preserve injury data
+      injury_status: v.injury_status || null
     };
   }
   return slim;
 }
 
-// --- Owned Index Builder ---
-function buildOwnedIndex() {
-  const myId = state.user?.user_id;
-  state.owned = new Map();
-  if (state.demoMode) {
-    for (const p of DEMO_ROSTER) {
-      state.owned.set(p.pid, { player: p, leagues: [{ id: 'demo', name: 'DEMO League' }] });
-    }
-    return;
+// Sleeper uses team defenses keyed by team abbreviation (e.g. "SF")
+function playerInfo(pid) {
+  const p = state.playersIndex[pid];
+  if (p) return p;
+  // DEF ids are team abbreviations
+  if (typeof pid === 'string' && pid.length <= 3 && pid === pid.toUpperCase()) {
+    return { full_name: `${pid} Defense`, team: pid, position: 'DEF', injury_status: null };
   }
-  for (const [leagueId, rosters] of state.rostersByLeague) {
-    const league = state.leagues.find(l => l.league_id === leagueId);
-    for (const r of rosters) {
+  return { full_name: pid, team: null, position: '-', injury_status: null };
+}
+
+// --- Resolve a display name for a fantasy team ---
+function teamName(user, roster) {
+  if (user?.metadata?.team_name) return user.metadata.team_name;
+  if (user?.display_name) return user.display_name;
+  if (roster?.metadata?.team_name) return roster.metadata.team_name;
+  return 'Team ' + (roster?.roster_id ?? '?');
+}
+
+// --- Starting slot labels for a league (exclude bench/IR/taxi) ---
+function startingSlots(leagueId) {
+  const meta = state.leagueMeta.get(leagueId) || {};
+  const positions = Array.isArray(meta.roster_positions) ? meta.roster_positions : [];
+  return positions.filter(p => !['BN', 'IR', 'TAXI'].includes(p));
+}
+
+/* ------------------------------------------------------------
+   Build the dashboard: one card per league = my team vs opp
+   ------------------------------------------------------------ */
+function buildDashboard() {
+  const myId = state.user?.user_id;
+  const cards = [];
+
+  for (const lg of state.leagues) {
+    const id = lg.league_id;
+    const rosters = state.rostersByLeague.get(id) || [];
+    const users = state.usersByLeague.get(id) || new Map();
+    const matchups = state.matchupsByLeague.get(id) || [];
+
+    // Find my roster
+    const myRoster = rosters.find(r => {
       const co = Array.isArray(r.co_owners) ? r.co_owners : [];
-      const isMine = r.owner_id === myId || co.includes(myId);
-      if (!isMine) continue;
-      const ids = Array.isArray(r.players) ? r.players : [];
-      for (const pid of ids) {
-        const p = state.playersIndex[pid];
-        if (!p) continue;
-        const entry = state.owned.get(pid) || { player: p, leagues: [] };
-        if (!entry.leagues.some(x => x.id === leagueId)) {
-          entry.leagues.push({ id: leagueId, name: league?.name || leagueId });
-        }
-        state.owned.set(pid, entry);
-      }
+      return r.owner_id === myId || co.includes(myId);
+    });
+    if (!myRoster) continue;
+
+    const rec = myRoster.settings || {};
+    const record = { w: rec.wins || 0, l: rec.losses || 0, t: rec.ties || 0 };
+
+    const myEntry = matchups.find(m => m.roster_id === myRoster.roster_id);
+    let oppEntry = null, oppRoster = null;
+    if (myEntry && myEntry.matchup_id != null) {
+      oppEntry = matchups.find(m => m.matchup_id === myEntry.matchup_id && m.roster_id !== myRoster.roster_id);
+      if (oppEntry) oppRoster = rosters.find(r => r.roster_id === oppEntry.roster_id);
     }
-  }
-}
 
-// --- Week Stats Cache ---
-async function ensureWeekStats() {
-  const season = Number($('#season').value);
-  const week = Number($('#week').value);
-  const key = `${season}-${week}`;
-  if (!state.statsCache.has(key)) {
-    const stats = await sleeper.getWeekStats(season, week);
-    state.statsCache.set(key, stats || {});
-  }
-  return key;
-}
+    const slots = startingSlots(id);
 
-// --- Points Calculation ---
-function calcPoints(pid, leagueId, key) {
-  const stats = state.statsCache.get(key) || {};
-  const s = stats?.[pid] || {};
-  const settings = state.leagueSettings.get(leagueId) || {};
-  let total = 0;
-  for (const k in settings) {
-    const w = settings[k];
-    const v = s[k];
-    if (typeof w === 'number' && typeof v === 'number') total += w * v;
-  }
-  return (Math.round(total * 100) / 100).toFixed(2);
-}
+    const side = (roster, entry) => {
+      if (!roster) return null;
+      const u = users.get(roster.owner_id);
+      const starters = Array.isArray(entry?.starters) ? entry.starters : (roster.starters || []);
+      const sPts = Array.isArray(entry?.starters_points) ? entry.starters_points : [];
+      const pMap = entry?.players_points || {};
+      const lineup = starters.map((pid, i) => {
+        const info = playerInfo(pid);
+        const pts = sPts[i] != null ? sPts[i] : (pMap[pid] != null ? pMap[pid] : 0);
+        const isEmpty = !pid || pid === '0';
+        return {
+          slot: slotLabel(slots[i] || info.position || '-'),
+          pid: isEmpty ? null : pid,
+          name: isEmpty ? '—' : info.full_name,
+          pos: info.position || '-',
+          team: normalizeTeamTag(info.team),
+          injury: info.injury_status,
+          pts: Number(pts) || 0,
+          game: isEmpty ? { text: '', kind: 'none' } : gameStatusFor(info.team),
+          empty: isEmpty
+        };
+      });
+      const total = entry?.points != null ? Number(entry.points)
+        : lineup.reduce((s, p) => s + p.pts, 0);
+      const yetToPlay = lineup.filter(p => !p.empty && (p.game.kind === 'pre')).length;
+      return {
+        name: teamName(u, roster),
+        avatar: avatarUrl(u?.avatar || u?.metadata?.avatar),
+        total,
+        lineup,
+        yetToPlay,
+        rosterId: roster.roster_id
+      };
+    };
 
-// --- Fetch Recent Week Stats for Sparklines (F7) ---
-async function ensureRecentStats(season, currentWeek, lookback = 4) {
-  const startWeek = Math.max(1, currentWeek - lookback);
-  const promises = [];
-  for (let w = startWeek; w < currentWeek; w++) {
-    const key = `${season}-${w}`;
-    if (!state.statsCache.has(key)) {
-      promises.push(
-        sleeper.getWeekStats(season, w)
-          .then(stats => state.statsCache.set(key, stats || {}))
-          .catch(() => state.statsCache.set(key, {}))
-      );
+    const me = side(myRoster, myEntry);
+    const opp = side(oppRoster, oppEntry);
+
+    let result = 'none';
+    if (opp) {
+      if (me.total > opp.total) result = 'winning';
+      else if (me.total < opp.total) result = 'losing';
+      else result = 'tie';
     }
+
+    cards.push({
+      leagueId: id,
+      leagueName: lg.name || id,
+      leagueAvatar: avatarUrl(state.leagueMeta.get(id)?.avatar, 'thumbs'),
+      record,
+      hasMatchup: !!(myEntry && oppEntry),
+      me, opp, slots, result
+    });
   }
-  if (promises.length) await Promise.all(promises);
-}
 
-// --- Get Sparkline Data for a Player (F7) ---
-function getSparklineData(pid, leagueId, season, currentWeek, lookback = 4) {
-  const startWeek = Math.max(1, currentWeek - lookback);
-  const points = [];
-  for (let w = startWeek; w < currentWeek; w++) {
-    const key = `${season}-${w}`;
-    points.push(Number(calcPoints(pid, leagueId, key)));
-  }
-  return points;
-}
-
-// --- Fetch Opponent Matchups (F6) ---
-async function fetchLeagueMatchups(week) {
-  state.matchups = new Map();
-  const results = await batchFetch(state.leagues, async (lg) => {
-    const matchups = await sleeper.getMatchups(lg.league_id, week);
-    return { leagueId: lg.league_id, matchups };
-  }, 3);
-
-  for (const result of results) {
-    if (result.status === 'fulfilled' && result.value) {
-      state.matchups.set(result.value.leagueId, result.value.matchups);
-    }
-  }
-}
-
-// --- Get Opponent Players for a League (F6) ---
-function getOpponentPlayers(leagueId) {
-  const matchups = state.matchups.get(leagueId);
-  if (!matchups) return [];
-
-  const myId = state.user?.user_id;
-  const rosters = state.rostersByLeague.get(leagueId) || [];
-
-  // Find my roster_id
-  const myRoster = rosters.find(r => {
-    const co = Array.isArray(r.co_owners) ? r.co_owners : [];
-    return r.owner_id === myId || co.includes(myId);
+  // Sort: matchups first, then winning/tie/losing, then league name
+  const order = { winning: 0, tie: 1, losing: 2, none: 3 };
+  cards.sort((a, b) => {
+    if (a.hasMatchup !== b.hasMatchup) return a.hasMatchup ? -1 : 1;
+    if (order[a.result] !== order[b.result]) return order[a.result] - order[b.result];
+    return a.leagueName.localeCompare(b.leagueName);
   });
-  if (!myRoster) return [];
 
-  // Find my matchup entry
-  const myMatchup = matchups.find(m => m.roster_id === myRoster.roster_id);
-  if (!myMatchup || myMatchup.matchup_id == null) return [];
-
-  // Find opponent's matchup entry
-  const oppMatchup = matchups.find(m =>
-    m.matchup_id === myMatchup.matchup_id && m.roster_id !== myRoster.roster_id
-  );
-  if (!oppMatchup) return [];
-
-  return Array.isArray(oppMatchup.players) ? oppMatchup.players : [];
+  state.cards = cards;
+  return cards;
 }

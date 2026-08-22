@@ -1,66 +1,93 @@
 /* ============================================================
-   Utils — DOM helpers, constants, state, localStorage cache
+   Utils — DOM helpers, state, constants, persistence
    ============================================================ */
 
 // --- DOM Helpers ---
 const $ = sel => document.querySelector(sel);
-const $$ = sel => document.querySelectorAll(sel);
+const $$ = sel => Array.from(document.querySelectorAll(sel));
 const $el = (tag, cls, txt) => {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
-  if (txt) e.textContent = txt;
+  if (txt != null) e.textContent = txt;
   return e;
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+));
 
-// --- Status Display ---
-function setStatus(html, cls = '') {
-  const s = $('#status');
-  s.innerHTML = html;
-  s.className = 'status ' + cls;
+// --- Number formatting ---
+function fmtPts(n) {
+  const v = Number(n) || 0;
+  return v.toFixed(2);
 }
 
-// --- Test Data ---
-const INLINE_TEST_SCHEDULE = [
-  { id: 't1', year: new Date().getFullYear(), week: 1, home: 'NYJ', away: 'BUF', kickoff: new Date(Date.now() + 3600e3).toISOString(), home_score: 0, away_score: 0, status: 'Scheduled' },
-  { id: 't2', year: new Date().getFullYear(), week: 1, home: 'KC', away: 'BAL', kickoff: new Date(Date.now() + 7200e3).toISOString(), home_score: 0, away_score: 0, status: 'Scheduled' }
-];
-const DEMO_ROSTER = [
-  { pid: 'demo_qb1', full_name: 'Josh Allen', team: 'BUF', position: 'QB' },
-  { pid: 'demo_wr1', full_name: 'Garrett Wilson', team: 'NYJ', position: 'WR' },
-  { pid: 'demo_te1', full_name: 'Travis Kelce', team: 'KC', position: 'TE' },
-  { pid: 'demo_rb1', full_name: 'Derrick Henry', team: 'BAL', position: 'RB' }
-];
+// --- Status banner ---
+function setStatus(html, cls = '') {
+  const s = $('#status');
+  if (!s) return;
+  s.innerHTML = html;
+  s.className = 'status' + (cls ? ' ' + cls : '');
+}
 
 // --- Application State ---
 const state = {
   user: null,
-  leagues: [],
-  rostersByLeague: new Map(),
-  playersIndex: {},
-  owned: new Map(),
-  schedule: [],
-  selectedMatch: null,
+  season: null,
+  week: null,
+  leagues: [],                 // [{league_id, name}]
+  rostersByLeague: new Map(),  // leagueId -> [roster]
+  usersByLeague: new Map(),    // leagueId -> Map(user_id -> user)
+  matchupsByLeague: new Map(), // leagueId -> [matchup entries]
+  leagueMeta: new Map(),       // leagueId -> {scoring_settings, roster_positions, name, avatar}
+  playersIndex: {},            // pid -> slim player
+  schedule: [],                // NFL games this week
+  scheduleByTeam: new Map(),   // team tag -> game
   scheduleSource: 'espn',
   demoMode: false,
-  statsCache: new Map(),
-  leagueSettings: new Map(),
-  matchups: new Map(),        // F6: league matchup data
-  favorites: new Set(),       // F8: favorite player IDs
-  lastExportRows: []          // F3: last rendered rows for export
+  cards: [],                   // built dashboard cards
+  favorites: new Set(),        // starred player ids
+  filterLeague: '*',
+  filterResult: 'all',         // all | winning | losing
+  onlyStarred: false
 };
 let autoTimer = null;
-let refreshInProgress = false; // O4: guard against double-refresh
+let refreshInProgress = false;
 
-// --- Team Tag Normalization ---
+// --- Team tag normalization (Sleeper/ESPN quirks) ---
 function normalizeTeamTag(tag) {
-  const map = { JAC: 'JAX', LA: 'LAR' };
-  return tag ? (map[tag] || tag) : tag;
+  if (!tag) return tag;
+  const map = { JAC: 'JAX', LA: 'LAR', WSH: 'WAS', OAK: 'LV', SD: 'LAC', STL: 'LAR' };
+  return map[tag] || tag;
 }
 
-// --- localStorage Cache for Player Index (O2) ---
+// --- Position color classes ---
+function posClass(pos) {
+  const p = (pos || '').toUpperCase();
+  if (p === 'QB') return 'pos-qb';
+  if (p === 'RB') return 'pos-rb';
+  if (p === 'WR') return 'pos-wr';
+  if (p === 'TE') return 'pos-te';
+  if (p === 'K') return 'pos-k';
+  if (p === 'DEF' || p === 'DST') return 'pos-def';
+  if (p === 'FLEX' || p === 'WRRB_FLEX' || p === 'REC_FLEX') return 'pos-flex';
+  if (p === 'SUPER_FLEX' || p === 'SUPERFLEX' || p === 'QB/WR/RB/TE') return 'pos-sflex';
+  return 'pos-other';
+}
+
+// --- Roster slot label normalization ---
+function slotLabel(slot) {
+  const map = {
+    WRRB_FLEX: 'FLEX', REC_FLEX: 'FLEX', FLEX: 'FLEX',
+    SUPER_FLEX: 'SFLX', SUPERFLEX: 'SFLX',
+    DEF: 'DEF', DST: 'DEF', IDP_FLEX: 'IDP'
+  };
+  return map[slot] || slot;
+}
+
+// --- localStorage cache for player index ---
 const PLAYER_CACHE_KEY = 'fmv_players_cache';
-const PLAYER_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const PLAYER_CACHE_TTL = 24 * 60 * 60 * 1000;
 
 function getCachedPlayers() {
   try {
@@ -78,107 +105,106 @@ function getCachedPlayers() {
   }
 }
 
-function setCachedPlayers(slimData) {
+function setCachedPlayers(data) {
   try {
-    localStorage.setItem(PLAYER_CACHE_KEY, JSON.stringify({
-      timestamp: Date.now(),
-      data: slimData
-    }));
-  } catch {
-    // localStorage full or unavailable — silently skip
-  }
+    localStorage.setItem(PLAYER_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch { /* quota — skip */ }
 }
 
-// --- Favorites persistence (F8) ---
-const FAVORITES_KEY = 'fmv_favorites';
+// --- Username memory ---
+const USERNAME_KEY = 'fmv_username';
+function getStoredUsername() {
+  try { return localStorage.getItem(USERNAME_KEY) || ''; } catch { return ''; }
+}
+function setStoredUsername(u) {
+  try { localStorage.setItem(USERNAME_KEY, u); } catch { /* ignore */ }
+}
 
+// --- Favorites persistence ---
+const FAVORITES_KEY = 'fmv_favorites';
 function loadFavorites() {
   try {
     const raw = localStorage.getItem(FAVORITES_KEY);
     if (raw) state.favorites = new Set(JSON.parse(raw));
   } catch { /* ignore */ }
 }
-
 function saveFavorites() {
-  try {
-    localStorage.setItem(FAVORITES_KEY, JSON.stringify([...state.favorites]));
-  } catch { /* ignore */ }
+  try { localStorage.setItem(FAVORITES_KEY, JSON.stringify([...state.favorites])); } catch { /* ignore */ }
 }
-
 function toggleFavorite(pid) {
-  if (state.favorites.has(pid)) {
-    state.favorites.delete(pid);
-  } else {
-    state.favorites.add(pid);
-  }
+  if (state.favorites.has(pid)) state.favorites.delete(pid);
+  else state.favorites.add(pid);
   saveFavorites();
 }
 
-// --- Theme persistence (F4) ---
+// --- Theme persistence ---
 const THEME_KEY = 'fmv_theme';
-
 function getStoredTheme() {
-  try { return localStorage.getItem(THEME_KEY) || 'dark'; } catch { return 'dark'; }
+  try {
+    return localStorage.getItem(THEME_KEY)
+      || (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  } catch { return 'dark'; }
 }
-
-function setStoredTheme(theme) {
-  try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
-}
-
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   const btn = $('#themeToggle');
-  if (btn) btn.textContent = theme === 'dark' ? '\u2600\uFE0F' : '\uD83C\uDF19';
-  setStoredTheme(theme);
+  if (btn) btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+  try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
 }
-
 function toggleTheme() {
-  const current = document.documentElement.getAttribute('data-theme') || 'dark';
-  applyTheme(current === 'dark' ? 'light' : 'dark');
+  const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+  applyTheme(cur === 'dark' ? 'light' : 'dark');
 }
 
-// --- URL State / Deep Linking (F5) ---
+// --- URL deep-link state ---
 function readUrlState() {
-  const params = new URLSearchParams(window.location.hash.replace('#', ''));
+  const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
   return {
     username: params.get('user') || '',
     season: params.get('season') || '',
-    week: params.get('week') || '',
-    league: params.get('league') || ''
+    week: params.get('week') || ''
   };
 }
-
 function writeUrlState() {
   const params = new URLSearchParams();
-  const username = $('#username').value.trim();
-  const season = $('#season').value;
-  const week = $('#week').value;
-  const league = $('#league').value;
-  if (username && username !== 'Username') params.set('user', username);
-  if (season) params.set('season', season);
-  if (week) params.set('week', week);
-  if (league && league !== '*') params.set('league', league);
+  const u = ($('#username').value || '').trim();
+  if (u) params.set('user', u);
+  if (state.season) params.set('season', state.season);
+  if (state.week) params.set('week', state.week);
   const hash = params.toString();
   history.replaceState(null, '', hash ? '#' + hash : window.location.pathname);
 }
 
-// --- Debounce Utility (O4) ---
+// --- Debounce ---
 function debounce(fn, delay) {
-  let timer;
-  return function (...args) {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn.apply(this, args), delay);
+  let t;
+  return function (...a) {
+    clearTimeout(t);
+    t = setTimeout(() => fn.apply(this, a), delay);
   };
 }
 
-// --- Batch Fetch Utility (O1) ---
-async function batchFetch(items, fn, concurrency = 3) {
+// --- Batched concurrency-limited fetch ---
+async function batchFetch(items, fn, concurrency = 4) {
   const results = [];
   for (let i = 0; i < items.length; i += concurrency) {
     const batch = items.slice(i, i + concurrency);
-    const batchResults = await Promise.allSettled(batch.map(fn));
-    results.push(...batchResults);
-    if (i + concurrency < items.length) await sleep(90);
+    const settled = await Promise.allSettled(batch.map(fn));
+    results.push(...settled);
+    if (i + concurrency < items.length) await sleep(80);
   }
   return results;
+}
+
+// --- Sleeper avatar URL ---
+function avatarUrl(avatar, size = 'thumbs') {
+  if (!avatar) return null;
+  if (/^https?:/.test(avatar)) return avatar;
+  return `https://sleepercdn.com/avatars/${size}/${avatar}`;
+}
+
+// --- Initials fallback for avatars ---
+function initials(name) {
+  const parts = String(name || '?').trim().split(/\s+/).slice(0, 2);
+  return parts.map(p => p[0] || '').join('').toUpperCase() || '?';
 }
