@@ -112,15 +112,16 @@ function buildDemoData() {
   ]);
 
   // Schedule: mix of final / live / upcoming; DAL absent => bye
+  const base = { possession: null, redzone: false, downDistance: '', lastPlay: '', broadcast: '', period: null, clock: '', home_rec: '', away_rec: '' };
   const schedule = [
-    { id: 'g1', home: 'BUF', away: 'KC',  kickoff: iso(-200), home_score: 27, away_score: 24, status: 'Final', live: false },
-    { id: 'g2', home: 'BAL', away: 'CIN', kickoff: iso(-30),  home_score: 21, away_score: 17, status: 'Q3 4:12', live: true },
-    { id: 'g3', home: 'DET', away: 'MIN', kickoff: iso(-30),  home_score: 14, away_score: 10, status: 'Q2 1:40', live: true },
-    { id: 'g4', home: 'PHI', away: 'NYG', kickoff: iso(90),   home_score: null, away_score: null, status: 'pre', live: false },
-    { id: 'g5', home: 'SF',  away: 'ATL', kickoff: iso(90),   home_score: null, away_score: null, status: 'pre', live: false },
-    { id: 'g6', home: 'GB',  away: 'ARI', kickoff: iso(180),  home_score: null, away_score: null, status: 'pre', live: false },
-    { id: 'g7', home: 'LV',  away: 'NYJ', kickoff: iso(180),  home_score: null, away_score: null, status: 'pre', live: false }
-  ].map(g => ({ ...g, home: normalizeTeamTag(g.home), away: normalizeTeamTag(g.away) }));
+    { id: 'g1', home: 'BUF', away: 'KC',  kickoff: iso(-200), home_score: 27, away_score: 24, status: 'Final', live: false, broadcast: 'CBS', home_rec: '6-2', away_rec: '5-3' },
+    { id: 'g2', home: 'BAL', away: 'CIN', kickoff: iso(-30),  home_score: 21, away_score: 17, status: 'Q3 4:12', live: true, period: 3, clock: '4:12', possession: 'BAL', redzone: true, downDistance: '2nd & Goal at CIN 6', lastPlay: 'L.Jackson pass complete to M.Andrews for 12 yards', broadcast: 'FOX', home_rec: '7-1', away_rec: '4-4' },
+    { id: 'g3', home: 'DET', away: 'MIN', kickoff: iso(-30),  home_score: 14, away_score: 10, status: 'Q2 1:40', live: true, period: 2, clock: '1:40', possession: 'MIN', redzone: false, downDistance: '3rd & 5 at DET 41', lastPlay: 'S.Barkley rush for 6 yards', broadcast: 'NBC', home_rec: '6-2', away_rec: '5-3' },
+    { id: 'g4', home: 'PHI', away: 'NYG', kickoff: iso(90),   home_score: null, away_score: null, status: 'pre', live: false, broadcast: 'FOX', home_rec: '6-2', away_rec: '2-6' },
+    { id: 'g5', home: 'SF',  away: 'ATL', kickoff: iso(90),   home_score: null, away_score: null, status: 'pre', live: false, broadcast: 'CBS', home_rec: '4-4', away_rec: '5-3' },
+    { id: 'g6', home: 'GB',  away: 'ARI', kickoff: iso(180),  home_score: null, away_score: null, status: 'pre', live: false, broadcast: 'FOX', home_rec: '6-2', away_rec: '3-5' },
+    { id: 'g7', home: 'LV',  away: 'NYJ', kickoff: iso(180),  home_score: null, away_score: null, status: 'pre', live: false, broadcast: 'ESPN', home_rec: '3-5', away_rec: '3-5' }
+  ].map(g => ({ ...base, ...g, home: normalizeTeamTag(g.home), away: normalizeTeamTag(g.away) }));
 
   return {
     user, season: 2026, week: 9, leagues, leagueMeta: meta,

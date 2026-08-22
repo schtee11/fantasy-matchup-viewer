@@ -17,9 +17,18 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => (
 ));
 
 // --- Number formatting ---
-function fmtPts(n) {
-  const v = Number(n) || 0;
-  return v.toFixed(2);
+function fmtPts(n) { return (Number(n) || 0).toFixed(2); }
+function fmtPts1(n) { return (Number(n) || 0).toFixed(1); }
+
+// --- Relative time ---
+function timeAgo(ts) {
+  if (!ts) return '';
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 5) return 'just now';
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.floor(m / 60)}h ago`;
 }
 
 // --- Status banner ---
@@ -35,26 +44,47 @@ const state = {
   user: null,
   season: null,
   week: null,
+  view: 'matchups',            // matchups | games | players | insights
+
   leagues: [],                 // [{league_id, name}]
-  rostersByLeague: new Map(),  // leagueId -> [roster]
-  usersByLeague: new Map(),    // leagueId -> Map(user_id -> user)
-  matchupsByLeague: new Map(), // leagueId -> [matchup entries]
-  leagueMeta: new Map(),       // leagueId -> {scoring_settings, roster_positions, name, avatar}
-  playersIndex: {},            // pid -> slim player
-  schedule: [],                // NFL games this week
-  scheduleByTeam: new Map(),   // team tag -> game
+  rostersByLeague: new Map(),
+  usersByLeague: new Map(),
+  matchupsByLeague: new Map(),
+  leagueMeta: new Map(),
+  playersIndex: {},
+  schedule: [],                // enriched NFL games
+  scheduleByTeam: new Map(),
   scheduleSource: 'espn',
+
+  cards: [],                   // per-league matchup cards
+  model: null,                 // unified command-center model
+
   demoMode: false,
-  cards: [],                   // built dashboard cards
-  favorites: new Set(),        // starred player ids
+  favorites: new Set(),
+  openLeagues: new Set(),      // expanded matchup cards (survives re-render)
+
+  // filters
   filterLeague: '*',
-  filterResult: 'all',         // all | winning | losing
-  onlyStarred: false
+  filterResult: 'all',
+  onlyStarred: false,
+  playerPos: 'all',
+  playerStatus: 'all',
+  playerLeague: '*',
+  playerSort: 'pts',
+  gameFilter: 'all',           // all | mine
+
+  // live engine
+  lastUpdated: 0,
+  prevPts: new Map(),          // key pid@leagueId -> pts (for flash)
+  bumped: new Set(),
+  firstModelBuilt: false
 };
 let autoTimer = null;
+let clockTimer = null;
+let demoTimer = null;
 let refreshInProgress = false;
 
-// --- Team tag normalization (Sleeper/ESPN quirks) ---
+// --- Team tag normalization ---
 function normalizeTeamTag(tag) {
   if (!tag) return tag;
   const map = { JAC: 'JAX', LA: 'LAR', WSH: 'WAS', OAK: 'LV', SD: 'LAC', STL: 'LAR' };
@@ -71,7 +101,7 @@ function posClass(pos) {
   if (p === 'K') return 'pos-k';
   if (p === 'DEF' || p === 'DST') return 'pos-def';
   if (p === 'FLEX' || p === 'WRRB_FLEX' || p === 'REC_FLEX') return 'pos-flex';
-  if (p === 'SUPER_FLEX' || p === 'SUPERFLEX' || p === 'QB/WR/RB/TE') return 'pos-sflex';
+  if (p === 'SFLX' || p === 'SUPER_FLEX' || p === 'SUPERFLEX') return 'pos-sflex';
   return 'pos-other';
 }
 
@@ -88,56 +118,41 @@ function slotLabel(slot) {
 // --- localStorage cache for player index ---
 const PLAYER_CACHE_KEY = 'fmv_players_cache';
 const PLAYER_CACHE_TTL = 24 * 60 * 60 * 1000;
-
 function getCachedPlayers() {
   try {
     const raw = localStorage.getItem(PLAYER_CACHE_KEY);
     if (!raw) return null;
     const { timestamp, data } = JSON.parse(raw);
-    if (Date.now() - timestamp > PLAYER_CACHE_TTL) {
-      localStorage.removeItem(PLAYER_CACHE_KEY);
-      return null;
-    }
+    if (Date.now() - timestamp > PLAYER_CACHE_TTL) { localStorage.removeItem(PLAYER_CACHE_KEY); return null; }
     return data;
-  } catch {
-    localStorage.removeItem(PLAYER_CACHE_KEY);
-    return null;
-  }
+  } catch { localStorage.removeItem(PLAYER_CACHE_KEY); return null; }
 }
-
 function setCachedPlayers(data) {
-  try {
-    localStorage.setItem(PLAYER_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data }));
-  } catch { /* quota — skip */ }
+  try { localStorage.setItem(PLAYER_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data })); } catch { /* quota */ }
 }
 
-// --- Username memory ---
+// --- Simple persistence helpers ---
+function lsGet(k, d = '') { try { return localStorage.getItem(k) ?? d; } catch { return d; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch { /* ignore */ } }
+
 const USERNAME_KEY = 'fmv_username';
-function getStoredUsername() {
-  try { return localStorage.getItem(USERNAME_KEY) || ''; } catch { return ''; }
-}
-function setStoredUsername(u) {
-  try { localStorage.setItem(USERNAME_KEY, u); } catch { /* ignore */ }
-}
+const getStoredUsername = () => lsGet(USERNAME_KEY);
+const setStoredUsername = u => lsSet(USERNAME_KEY, u);
 
-// --- Favorites persistence ---
+const VIEW_KEY = 'fmv_view';
+
+// --- Favorites ---
 const FAVORITES_KEY = 'fmv_favorites';
 function loadFavorites() {
-  try {
-    const raw = localStorage.getItem(FAVORITES_KEY);
-    if (raw) state.favorites = new Set(JSON.parse(raw));
-  } catch { /* ignore */ }
+  try { const raw = localStorage.getItem(FAVORITES_KEY); if (raw) state.favorites = new Set(JSON.parse(raw)); } catch { /* ignore */ }
 }
-function saveFavorites() {
-  try { localStorage.setItem(FAVORITES_KEY, JSON.stringify([...state.favorites])); } catch { /* ignore */ }
-}
+function saveFavorites() { lsSet(FAVORITES_KEY, JSON.stringify([...state.favorites])); }
 function toggleFavorite(pid) {
-  if (state.favorites.has(pid)) state.favorites.delete(pid);
-  else state.favorites.add(pid);
+  if (state.favorites.has(pid)) state.favorites.delete(pid); else state.favorites.add(pid);
   saveFavorites();
 }
 
-// --- Theme persistence ---
+// --- Theme ---
 const THEME_KEY = 'fmv_theme';
 function getStoredTheme() {
   try {
@@ -149,7 +164,7 @@ function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   const btn = $('#themeToggle');
   if (btn) btn.textContent = theme === 'dark' ? '☀️' : '🌙';
-  try { localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
+  lsSet(THEME_KEY, theme);
 }
 function toggleTheme() {
   const cur = document.documentElement.getAttribute('data-theme') || 'dark';
@@ -162,15 +177,17 @@ function readUrlState() {
   return {
     username: params.get('user') || '',
     season: params.get('season') || '',
-    week: params.get('week') || ''
+    week: params.get('week') || '',
+    view: params.get('view') || ''
   };
 }
 function writeUrlState() {
   const params = new URLSearchParams();
-  const u = ($('#username').value || '').trim();
+  const u = ($('#username')?.value || '').trim();
   if (u) params.set('user', u);
   if (state.season) params.set('season', state.season);
   if (state.week) params.set('week', state.week);
+  if (state.view && state.view !== 'matchups') params.set('view', state.view);
   const hash = params.toString();
   history.replaceState(null, '', hash ? '#' + hash : window.location.pathname);
 }
@@ -178,10 +195,7 @@ function writeUrlState() {
 // --- Debounce ---
 function debounce(fn, delay) {
   let t;
-  return function (...a) {
-    clearTimeout(t);
-    t = setTimeout(() => fn.apply(this, a), delay);
-  };
+  return function (...a) { clearTimeout(t); t = setTimeout(() => fn.apply(this, a), delay); };
 }
 
 // --- Batched concurrency-limited fetch ---
@@ -196,14 +210,12 @@ async function batchFetch(items, fn, concurrency = 4) {
   return results;
 }
 
-// --- Sleeper avatar URL ---
+// --- Avatars ---
 function avatarUrl(avatar, size = 'thumbs') {
   if (!avatar) return null;
   if (/^https?:/.test(avatar)) return avatar;
   return `https://sleepercdn.com/avatars/${size}/${avatar}`;
 }
-
-// --- Initials fallback for avatars ---
 function initials(name) {
   const parts = String(name || '?').trim().split(/\s+/).slice(0, 2);
   return parts.map(p => p[0] || '').join('').toUpperCase() || '?';
